@@ -68,6 +68,8 @@ TBD
 
 #### <a name="how_to_run"></a>How to run
 
+TODO change this to reflect reality.
+
 1. Make sure you have the following tools available:
     - A Java 8 JDK.
     - Maven builder (tested with version 3.3.9).
@@ -80,6 +82,8 @@ TBD
 1. Play changing the values in the URL and observe the cache hits and misses in the console.
 
 #### Next steps and enhancements
+
+TODO change this too.
 
 - Adding a TTL (time to live) to the cached information. This is trivial 
   when using Redis but needs discussion and needs to be configured 
