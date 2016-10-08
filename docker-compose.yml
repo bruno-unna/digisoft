@@ -1,0 +1,17 @@
+version: '2'
+
+services:
+  mss-service:
+    image: unna/mss-service
+    ports:
+      - "8080:8080"
+    environment:
+      - HTTP_PORT=8080
+    depends_on:
+      - rabbit
+  rabbit:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "25672:25672"
+      - "15672:15672"
