@@ -15,3 +15,7 @@ services:
       - "5672:5672"
       - "25672:25672"
       - "15672:15672"
+  swagger:
+    image: swaggerapi/swagger-editor
+    ports:
+      - "9090:8080"

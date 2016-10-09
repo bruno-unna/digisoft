@@ -60,6 +60,8 @@ specification file has been provided, that includes both the runnable service an
 
 Since the solution was devised as a reactive application, a stack was chosen, as simple as possible but fit for purpose. Based on that reasoning, [Vert.x](http://vertx.io/) was selected.
 
+For the creation of the API specification the [Swagger Editor](http://swagger.io/) was chosen and used. The YAML file with the specification is included in the project source code (file `/swagger.yaml`). For your convenience, the docker-compose specification includes an image of the tool, ready to use on [port 9090 of the host](http://localhost:9090/).
+
 ### Discussion
 
 #### Code structure
