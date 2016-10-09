@@ -1,4 +1,4 @@
 {
-  "http.port": 8081,
+  "http.port": 8080,
   "rabbit.host": "localhost"
 }
