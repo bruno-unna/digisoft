@@ -34,7 +34,6 @@ paths:
           description: An object containing an array of message_type/count pairs
           schema:
             $ref: '#/definitions/SubscriptionCounters'
-  /subscriptions:
     put:
       summary: Create/update subscriptions
       description: |
@@ -44,6 +43,11 @@ paths:
       tags:
         - Subscriptions
       parameters:
+        - name: id
+          in: path
+          description: Identifier of the subscription.
+          required: true
+          type: string
         - name: subscription
           in: body
           description: Subscription that will be created or updated.
@@ -93,9 +97,6 @@ definitions:
   Subscription:
     type: object
     properties:
-      subscription_id:
-        description: Identifier of the subscription.
-        type: string
       message_types:
         description: List of message types upon which the subscription is interested.
         type: array
