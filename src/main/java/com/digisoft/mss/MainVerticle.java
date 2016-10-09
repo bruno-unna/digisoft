@@ -3,12 +3,19 @@ package com.digisoft.mss;
 
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.Future;
+import io.vertx.core.json.JsonArray;
+import io.vertx.core.json.JsonObject;
 import io.vertx.core.logging.Logger;
 import io.vertx.core.logging.LoggerFactory;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
 
+import static io.netty.handler.codec.http.HttpHeaderValues.APPLICATION_JSON;
+import static io.netty.handler.codec.http.HttpResponseStatus.BAD_REQUEST;
+import static io.netty.handler.codec.http.HttpResponseStatus.CREATED;
+import static io.netty.handler.codec.http.HttpResponseStatus.INTERNAL_SERVER_ERROR;
 import static io.netty.handler.codec.http.HttpResponseStatus.OK;
+import static io.vertx.core.http.HttpHeaders.CONTENT_TYPE;
 
 /**
  * A verticle that works as a micro-service for the management of subscriptions.
@@ -71,7 +78,29 @@ public class MainVerticle extends AbstractVerticle {
      * @param routingContext routing context as provided by vertx-web
      */
     private void handleGetSubscription(RoutingContext routingContext) {
-        routingContext.response().setStatusCode(OK.code()).end("Ok!");
+        String subscriptionId = routingContext.request().getParam("id");
+        logger.info("received a request, subscription_id=" + subscriptionId);
+
+        routingContext.response().putHeader(CONTENT_TYPE.toString(), APPLICATION_JSON);
+
+        if (subscriptionId == null) {
+            routingContext
+                    .response()
+                    .setStatusCode(BAD_REQUEST.code())
+                    .end(new JsonObject()
+                            .put("code", BAD_REQUEST.code())
+                            .put("message", BAD_REQUEST.reasonPhrase())
+                            .encodePrettily());
+        } else {
+            // TODO replace this fake response with a real one
+            routingContext
+                    .response()
+                    .setStatusCode(OK.code())
+                    .end(new JsonObject()
+                            .put("subscription_id", subscriptionId)
+                            .put("counters", new JsonArray())
+                            .encodePrettily());
+        }
     }
 
     /**
@@ -81,6 +110,13 @@ public class MainVerticle extends AbstractVerticle {
      * @param routingContext routing context as provided by vertx-web
      */
     private void handlePutSubscription(RoutingContext routingContext) {
+        routingContext.response().putHeader(CONTENT_TYPE.toString(), APPLICATION_JSON);
+
+        // TODO replace this fake response with a real one
+        routingContext
+                .response()
+                .setStatusCode(CREATED.code())
+                .end();
 
     }
 
@@ -90,6 +126,12 @@ public class MainVerticle extends AbstractVerticle {
      * @param routingContext routing context as provided by vertx-web
      */
     private void handlePostMessage(RoutingContext routingContext) {
+        routingContext.response().putHeader(CONTENT_TYPE.toString(), APPLICATION_JSON);
 
+        // TODO replace this fake response with a real one
+        routingContext
+                .response()
+                .setStatusCode(CREATED.code())
+                .end();
     }
 }
