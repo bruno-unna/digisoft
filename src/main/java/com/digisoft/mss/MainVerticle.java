@@ -167,6 +167,8 @@ public class MainVerticle extends AbstractVerticle {
     private void handlePostMessage(RoutingContext routingContext) {
         routingContext.response().putHeader(CONTENT_TYPE.toString(), APPLICATION_JSON);
 
+        logger.info("received a post request");
+
         // TODO replace this fake response with a real one
         routingContext
                 .response()
