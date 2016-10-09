@@ -1,14 +1,18 @@
 package com.digisoft.mss;
 
 
+import java.util.HashSet;
+
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.Future;
+import io.vertx.core.http.HttpMethod;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.core.logging.Logger;
 import io.vertx.core.logging.LoggerFactory;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
+import io.vertx.ext.web.handler.CorsHandler;
 
 import static io.netty.handler.codec.http.HttpHeaderValues.APPLICATION_JSON;
 import static io.netty.handler.codec.http.HttpResponseStatus.BAD_REQUEST;
@@ -52,6 +56,11 @@ public class MainVerticle extends AbstractVerticle {
         // create the routes that are recognised by the service
         // and send requests to appropriate handler/catalog
         Router router = Router.router(vertx);
+        // allow CORS, so that we can use swagger (and other tools) for testing
+        router.route().handler(CorsHandler.create("*")
+                .allowedMethod(HttpMethod.GET)
+                .allowedMethod(HttpMethod.PUT)
+                .allowedMethod(HttpMethod.POST));
         router.get("/subscriptions/:id").handler(this::handleGetSubscription);
         router.put("/subscriptions").handler(this::handlePutSubscription);
         router.post("/messages").handler(this::handlePostMessage);
