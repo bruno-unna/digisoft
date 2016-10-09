@@ -2,6 +2,7 @@ package com.digisoft.mss;
 
 
 import java.util.HashSet;
+import java.util.Set;
 
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.Future;
@@ -17,9 +18,11 @@ import io.vertx.ext.web.handler.CorsHandler;
 import static io.netty.handler.codec.http.HttpHeaderValues.APPLICATION_JSON;
 import static io.netty.handler.codec.http.HttpResponseStatus.BAD_REQUEST;
 import static io.netty.handler.codec.http.HttpResponseStatus.CREATED;
-import static io.netty.handler.codec.http.HttpResponseStatus.INTERNAL_SERVER_ERROR;
 import static io.netty.handler.codec.http.HttpResponseStatus.OK;
 import static io.vertx.core.http.HttpHeaders.CONTENT_TYPE;
+import static io.vertx.core.http.HttpMethod.GET;
+import static io.vertx.core.http.HttpMethod.POST;
+import static io.vertx.core.http.HttpMethod.PUT;
 
 /**
  * A verticle that works as a micro-service for the management of subscriptions.
@@ -56,14 +59,28 @@ public class MainVerticle extends AbstractVerticle {
         // create the routes that are recognised by the service
         // and send requests to appropriate handler/catalog
         Router router = Router.router(vertx);
+
         // allow CORS, so that we can use swagger (and other tools) for testing
+
+        Set<HttpMethod> allowedMethods = new HashSet<>();
+        allowedMethods.add(GET);
+        allowedMethods.add(PUT);
+        allowedMethods.add(POST);
+
+        Set<String> allowedHeaders = new HashSet<>();
+        allowedHeaders.add("x-requested-with");
+        allowedHeaders.add("Access-Control-Allow-Origin");
+        allowedHeaders.add("origin");
+        allowedHeaders.add("Content-Type");
+        allowedHeaders.add("accept");
+
         router.route().handler(CorsHandler.create("*")
-                .allowedMethod(HttpMethod.GET)
-                .allowedMethod(HttpMethod.PUT)
-                .allowedMethod(HttpMethod.POST));
-        router.get("/subscriptions/:id").handler(this::handleGetSubscription);
-        router.put("/subscriptions").handler(this::handlePutSubscription);
-        router.post("/messages").handler(this::handlePostMessage);
+                .allowedMethods(allowedMethods)
+                .allowedHeaders(allowedHeaders));
+
+        router.route(GET, "/subscriptions/:id").handler(this::handleGetSubscription);
+        router.route(PUT, "/subscriptions/:id").handler(this::handlePutSubscription);
+        router.route(POST, "/messages").handler(this::handlePostMessage);
 
         // finally, create the http server, using the created router
         vertx
@@ -87,10 +104,10 @@ public class MainVerticle extends AbstractVerticle {
      * @param routingContext routing context as provided by vertx-web
      */
     private void handleGetSubscription(RoutingContext routingContext) {
-        String subscriptionId = routingContext.request().getParam("id");
-        logger.info("received a request, subscription_id=" + subscriptionId);
-
         routingContext.response().putHeader(CONTENT_TYPE.toString(), APPLICATION_JSON);
+
+        String subscriptionId = routingContext.request().getParam("id");
+        logger.info("received a get request, subscription_id=" + subscriptionId);
 
         if (subscriptionId == null) {
             routingContext
@@ -121,11 +138,24 @@ public class MainVerticle extends AbstractVerticle {
     private void handlePutSubscription(RoutingContext routingContext) {
         routingContext.response().putHeader(CONTENT_TYPE.toString(), APPLICATION_JSON);
 
-        // TODO replace this fake response with a real one
-        routingContext
-                .response()
-                .setStatusCode(CREATED.code())
-                .end();
+        String subscriptionId = routingContext.request().getParam("id");
+        logger.info("received a put request, subscription_id=" + subscriptionId);
+
+        if (subscriptionId == null) {
+            routingContext
+                    .response()
+                    .setStatusCode(BAD_REQUEST.code())
+                    .end(new JsonObject()
+                            .put("code", BAD_REQUEST.code())
+                            .put("message", BAD_REQUEST.reasonPhrase())
+                            .encodePrettily());
+        } else {
+            // TODO replace this fake response with a real one
+            routingContext
+                    .response()
+                    .setStatusCode(CREATED.code())
+                    .end("{}");
+        }
 
     }
 
@@ -141,6 +171,6 @@ public class MainVerticle extends AbstractVerticle {
         routingContext
                 .response()
                 .setStatusCode(CREATED.code())
-                .end();
+                .end("{}");
     }
 }
