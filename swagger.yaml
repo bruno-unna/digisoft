@@ -1,0 +1,134 @@
+swagger: '2.0'
+info:
+  title: Messsaging Subscription Service (MSS)
+  description: Digicom's simple messaging subscription service.
+  version: "0.1.0"
+host: localhost:8080
+schemes:
+  - http
+  - https
+basePath: /
+consumes:
+  - application/json
+produces:
+  - application/json
+paths:
+  /subscriptions/{id}:
+    get:
+      summary: Describe a subscription
+      description: |
+        The subscriptions endpoint returns detailed information about the
+        subscriptions, including the message types the subscription is
+        interested upon, and for each of them the number of messages that
+        have been sent.
+      parameters:
+        - name: id
+          in: path
+          description: Identifier of the subscription.
+          required: true
+          type: string
+      tags:
+        - Subscriptions
+      responses:
+        200:
+          description: An object containing an array of message_type/count pairs
+          schema:
+            $ref: '#/definitions/SubscriptionCounters'
+    put:
+      summary: Create/update subscriptions
+      description: |
+        The *put* operation in this endpoint is used for both creating and
+        updating subscriptions. All operations regarding subscriptions in this
+        API are idempotent.
+      tags:
+        - Subscriptions
+      parameters:
+        - name: id
+          in: path
+          description: Identifier of the subscription.
+          required: true
+          type: string
+        - name: subscription
+          in: body
+          description: Subscription that will be created or updated.
+          required: true
+          schema:
+            $ref: '#/definitions/Subscription'
+      responses:
+        201:
+          description: Subscription has been created/updated. Null response.
+        default:
+          description: Unexpected error.
+          schema:
+            $ref: '#/definitions/Error'
+  /messages:
+    post:
+      summary: Send a message to its subscriptors
+      description: |
+        This is the only non-idempotent operation in the API. It is used to
+        send messages to the service, so that it can distribute them to all
+        the subscriptors interested in the message's type.
+      tags:
+        - Messages
+      parameters:
+        - name: message
+          in: body
+          description: Message to send (including type and payload).
+          required: true
+          schema:
+            $ref: '#/definitions/Message'
+      responses:
+        202:
+          description: Message has been sent. Null response.
+        default:
+          description: Unexpected error.
+          schema:
+            $ref: '#/definitions/Error'
+definitions:
+  Message:
+    type: object
+    properties:
+      messageType:
+        description: Type of the message being sent, used to distributed amongst interested subscriptors.
+        type: string
+      messageBody:
+        description: Payload of the message.
+        type: string
+  Subscription:
+    type: object
+    properties:
+      messageTypes:
+        description: List of message types upon which the subscription is interested.
+        type: array
+        items:
+          description: Message type, as a string.
+          type: string
+  SubscriptionCounters:
+    type: object
+    properties:
+      subscriptionId:
+        description: Subscription identifier being described.
+        type: string
+      counters:
+        type: array
+        items:
+          description: Counter for a given subscription/message type.
+          type: object
+          properties:
+            messageType:
+              description: Type of the message.
+              type: string
+            count:
+              description: Number of times a message type has been used for the subscription.
+              type: integer
+              format: int64
+  Error:
+    type: object
+    properties:
+      code:
+        description: Numeric code of the error.
+        type: integer
+        format: int32
+      message:
+        description: Verbose description of the error situation.
+        type: string
