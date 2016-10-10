@@ -86,16 +86,16 @@ TBD
        ```
        docker run -d --name redis -p "5672:5672" -p "25672:25672" -p "15672:15672" rabbitmq:3-management
        ```
-       Or alternatively (if you have docker-compose):
+       Or alternatively (if you have docker-compose):  
        ```
        docker-compose up -d rabbit
        ```
-    1. Execute the jar file:
+    1. Execute the jar file:  
        ```
        java -jar target/mss-0.1.0-fat.jar -conf target/classes/config.json
        ```
        Configuration values can be set in the `target/classes/config.json` file, or can be supplied as environment definitions (with the `-D` option).
-1. If, on the other hand, you prefer using `docker-compose` (recommended), just execute:
+1. If, on the other hand, you prefer using `docker-compose` (recommended), just execute:  
    ```
    docker-compose -p digisoft up
    ```
