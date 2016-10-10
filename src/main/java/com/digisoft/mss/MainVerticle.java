@@ -183,8 +183,8 @@ public class MainVerticle extends AbstractVerticle {
     private void handlePutSubscription(RoutingContext routingContext) {
         routingContext.response().putHeader(CONTENT_TYPE.toString(), APPLICATION_JSON);
 
-        String subscriptionId = routingContext.request().getParam("id");
-        logger.info("received a put request, subscription_id=" + subscriptionId);
+        final String subscriptionId = routingContext.request().getParam("id");
+        logger.info("received a put request, subscription id=" + subscriptionId);
 
         if (subscriptionId == null) {
             endWithError(routingContext, BAD_REQUEST);
@@ -192,7 +192,7 @@ public class MainVerticle extends AbstractVerticle {
             routingContext.request().bodyHandler(body -> {
                 final String bodyAsString = body.toString();
                 try {
-                    Subscription subscription = Json.decodeValue(bodyAsString, Subscription.class);
+                    final Subscription subscription = Json.decodeValue(bodyAsString, Subscription.class);
                     rabbitMQClient.queueDelete(subscriptionId, queueDeletionResult -> {
                         if (queueDeletionResult.succeeded()) {
                             logger.info("Queue '" + subscriptionId + "' has been deleted");
@@ -218,9 +218,11 @@ public class MainVerticle extends AbstractVerticle {
                                         }
                                     });
                                     if (!counters.containsKey(messageType)) {
-                                        Map<String, Integer> counter = new HashMap<>();
+                                        counters.put(messageType, new HashMap<>());
+                                    }
+                                    final Map<String, Integer> counter = counters.get(messageType);
+                                    if (!counter.containsKey(subscriptionId)) {
                                         counter.put(subscriptionId, 0);
-                                        counters.put(messageType, counter);
                                     }
                                 });
                                 if (bindError[0]) {
@@ -261,16 +263,17 @@ public class MainVerticle extends AbstractVerticle {
             logger.info("received a post request with body " + bodyAsString);
             try {
                 Message message = Json.decodeValue(bodyAsString, Message.class);
-                if (!counters.containsKey(message.getMessageType())) {
+                final String messageType = message.getMessageType();
+                if (!counters.containsKey(messageType)) {
                     logger.warn("Trying to send a message of an unknown type");
                     endWithError(routingContext, BAD_REQUEST);
                 } else {
                     rabbitMQClient.basicPublish(EXCHANGE_NAME,
-                            message.getMessageType(),
+                            messageType,
                             new JsonObject().put("body", message.getMessageBody()),
                             publishResult -> {
                                 if (publishResult.succeeded()) {
-                                    counters.get(message.getMessageType()).entrySet()
+                                    counters.get(messageType).entrySet()
                                             .forEach(entry -> entry.setValue(entry.getValue() + 1));
                                     routingContext
                                             .response()
