@@ -71,7 +71,7 @@ public class MainVerticle extends AbstractVerticle {
         rabbitMQClient.start(startResult -> {
             if (startResult.succeeded()) {
                 logger.info("RabbitMQ client has been started");
-                rabbitMQClient.exchangeDeclare(EXCHANGE_NAME, "direct", false, true, exchangeDeclarationResult -> {
+                rabbitMQClient.exchangeDeclare(EXCHANGE_NAME, "direct", true, false, exchangeDeclarationResult -> {
                     if (exchangeDeclarationResult.failed()) {
                         logger.error("Can't declare the '" + EXCHANGE_NAME + "' exchange", exchangeDeclarationResult.cause());
                         startFuture.fail(exchangeDeclarationResult.toString());
@@ -190,7 +190,7 @@ public class MainVerticle extends AbstractVerticle {
         logger.info("received a put request, subscription_id=" + subscriptionId);
 
         if (subscriptionId == null) {
-            endWithCode(routingContext, BAD_REQUEST);
+            endWithError(routingContext, BAD_REQUEST);
         } else {
             routingContext.request().bodyHandler(body -> {
                 final String bodyAsString = body.toString();
@@ -206,31 +206,39 @@ public class MainVerticle extends AbstractVerticle {
                             if (queueDeclarationResult.succeeded()) {
                                 logger.info("Queue '" + subscriptionId + "' has been declared");
 
+                                final boolean[] bindError = {false};
                                 subscription.getMessageTypes().forEach(messageType -> {
                                     rabbitMQClient.queueBind(subscriptionId, EXCHANGE_NAME, messageType, queueBindResult -> {
                                         if (queueBindResult.succeeded()) {
                                             logger.info("Queue '" + subscriptionId
                                                     + "' has been bound to exchange '" + EXCHANGE_NAME + "' with routing key "
                                                     + messageType);
-                                            endWithCode(routingContext, OK);
                                         } else {
+                                            bindError[0] = true;
                                             logger.error("Queue '" + subscriptionId
                                                     + "' can't be bound to exchange '" + EXCHANGE_NAME + "' with routing key "
                                                     + messageType, queueBindResult.cause());
-                                            endWithCode(routingContext, INTERNAL_SERVER_ERROR);
                                         }
                                     });
                                 });
+                                if (bindError[0]) {
+                                    endWithError(routingContext, INTERNAL_SERVER_ERROR);
+                                } else {
+                                    routingContext
+                                            .response()
+                                            .setStatusCode(OK.code())
+                                            .end("{}");
+                                }
                             } else {
                                 logger.error("Queue '" + subscriptionId
                                         + "' couldn't be declared", queueDeclarationResult.cause());
-                                endWithCode(routingContext, INTERNAL_SERVER_ERROR);
+                                endWithError(routingContext, INTERNAL_SERVER_ERROR);
                             }
                         });
                     });
                 } catch (DecodeException e) {
                     logger.error("Error decoding '" + bodyAsString + "' as a subscription", e);
-                    endWithCode(routingContext, BAD_REQUEST);
+                    endWithError(routingContext, BAD_REQUEST);
                 }
             });
         }
@@ -260,7 +268,7 @@ public class MainVerticle extends AbstractVerticle {
      * @param routingContext context who's response will be ended
      * @param responseStatus http response status to be given
      */
-    private void endWithCode(RoutingContext routingContext, HttpResponseStatus responseStatus) {
+    private void endWithError(RoutingContext routingContext, HttpResponseStatus responseStatus) {
         routingContext
                 .response()
                 .setStatusCode(responseStatus.code())
