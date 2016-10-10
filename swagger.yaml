@@ -88,16 +88,16 @@ definitions:
   Message:
     type: object
     properties:
-      message_type:
+      messageType:
         description: Type of the message being sent, used to distributed amongst interested subscriptors.
         type: string
-      message_body:
+      messageBody:
         description: Payload of the message.
         type: string
   Subscription:
     type: object
     properties:
-      message_types:
+      messageTypes:
         description: List of message types upon which the subscription is interested.
         type: array
         items:
@@ -106,7 +106,7 @@ definitions:
   SubscriptionCounters:
     type: object
     properties:
-      subscription_id:
+      subscriptionId:
         description: Subscription identifier being described.
         type: string
       counters:
@@ -115,7 +115,7 @@ definitions:
           description: Counter for a given subscription/message type.
           type: object
           properties:
-            message_type:
+            messageType:
               description: Type of the message.
               type: string
             count:
