@@ -1,9 +1,12 @@
 package com.digisoft.mss;
 
 
+import com.digisoft.mss.model.Message;
 import com.digisoft.mss.model.Subscription;
 
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 
 import io.netty.handler.codec.http.HttpResponseStatus;
@@ -22,6 +25,7 @@ import io.vertx.ext.web.handler.CorsHandler;
 import io.vertx.rabbitmq.RabbitMQClient;
 
 import static io.netty.handler.codec.http.HttpHeaderValues.APPLICATION_JSON;
+import static io.netty.handler.codec.http.HttpResponseStatus.ACCEPTED;
 import static io.netty.handler.codec.http.HttpResponseStatus.BAD_REQUEST;
 import static io.netty.handler.codec.http.HttpResponseStatus.CREATED;
 import static io.netty.handler.codec.http.HttpResponseStatus.INTERNAL_SERVER_ERROR;
@@ -40,6 +44,7 @@ public class MainVerticle extends AbstractVerticle {
     private static final int DEFAULT_HTTP_PORT = 8080;
     private static final String EXCHANGE_NAME = "mss.direct";
     private RabbitMQClient rabbitMQClient;
+    private Map<String, Map<String, Integer>> counters = new HashMap<>();
     private Logger logger = LoggerFactory.getLogger(MainVerticle.class);
 
     @Override
@@ -220,13 +225,18 @@ public class MainVerticle extends AbstractVerticle {
                                                     + messageType, queueBindResult.cause());
                                         }
                                     });
+                                    if (!counters.containsKey(messageType)) {
+                                        Map<String, Integer> counter = new HashMap<>();
+                                        counter.put(subscriptionId, 0);
+                                        counters.put(messageType, counter);
+                                    }
                                 });
                                 if (bindError[0]) {
                                     endWithError(routingContext, INTERNAL_SERVER_ERROR);
                                 } else {
                                     routingContext
                                             .response()
-                                            .setStatusCode(OK.code())
+                                            .setStatusCode(CREATED.code())
                                             .end("{}");
                                 }
                             } else {
@@ -253,13 +263,40 @@ public class MainVerticle extends AbstractVerticle {
     private void handlePostMessage(RoutingContext routingContext) {
         routingContext.response().putHeader(CONTENT_TYPE.toString(), APPLICATION_JSON);
 
-        logger.info("received a post request");
 
-        // TODO replace this fake response with a real one
-        routingContext
-                .response()
-                .setStatusCode(CREATED.code())
-                .end("{}");
+        routingContext.request().bodyHandler(body -> {
+            final String bodyAsString = body.toString();
+            logger.info("received a post request with body " + bodyAsString);
+            try {
+                Message message = Json.decodeValue(bodyAsString, Message.class);
+                if (!counters.containsKey(message.getMessageType())) {
+                    logger.warn("Trying to send a message of an unknown type");
+                    endWithError(routingContext, BAD_REQUEST);
+                } else {
+                    rabbitMQClient.basicPublish(EXCHANGE_NAME,
+                            message.getMessageType(),
+                            new JsonObject().put("body", message.getMessageBody()),
+                            publishResult -> {
+                                if (publishResult.succeeded()) {
+                                    counters.get(message.getMessageType()).entrySet()
+                                            .forEach(entry -> entry.setValue(entry.getValue() + 1));
+                                    routingContext
+                                            .response()
+                                            .setStatusCode(ACCEPTED.code())
+                                            .end("{}");
+                                } else {
+                                    logger.error("Can't publish message " + message, publishResult.cause());
+                                    endWithError(routingContext, INTERNAL_SERVER_ERROR);
+                                }
+
+                            });
+
+                }
+            } catch (DecodeException e) {
+                logger.error("Error decoding '" + bodyAsString + "' as a message", e);
+                endWithError(routingContext, BAD_REQUEST);
+            }
+        });
     }
 
     /**
