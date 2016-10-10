@@ -33,6 +33,8 @@ The message subscription service must expose a RESTful interface for operations:
 * Clean, maintainable code must be used.
 * Good programming practices should be displayed.
 
+![Use case diagram](use_cases.png)
+
 ## Solution
 
 It is nowadays commonly understood that expressing distributed systems in terms of micro-services provides a strong support towards a domain-based, scalable, maintainable, long-term solution.
