@@ -1,12 +1,18 @@
 package com.digisoft.mss;
 
 
+import com.digisoft.mss.model.Subscription;
+
 import java.util.HashSet;
 import java.util.Set;
 
+import io.netty.handler.codec.http.HttpResponseStatus;
 import io.vertx.core.AbstractVerticle;
+import io.vertx.core.DeploymentOptions;
 import io.vertx.core.Future;
 import io.vertx.core.http.HttpMethod;
+import io.vertx.core.json.DecodeException;
+import io.vertx.core.json.Json;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
 import io.vertx.core.logging.Logger;
@@ -14,10 +20,13 @@ import io.vertx.core.logging.LoggerFactory;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.handler.CorsHandler;
+import io.vertx.servicediscovery.Record;
+import io.vertx.servicediscovery.ServiceDiscovery;
 
 import static io.netty.handler.codec.http.HttpHeaderValues.APPLICATION_JSON;
 import static io.netty.handler.codec.http.HttpResponseStatus.BAD_REQUEST;
 import static io.netty.handler.codec.http.HttpResponseStatus.CREATED;
+import static io.netty.handler.codec.http.HttpResponseStatus.INTERNAL_SERVER_ERROR;
 import static io.netty.handler.codec.http.HttpResponseStatus.OK;
 import static io.vertx.core.http.HttpHeaders.CONTENT_TYPE;
 import static io.vertx.core.http.HttpMethod.GET;
@@ -33,6 +42,8 @@ public class MainVerticle extends AbstractVerticle {
     private static final int DEFAULT_HTTP_PORT = 8080;
 
     private Logger logger = LoggerFactory.getLogger(MainVerticle.class);
+    private ServiceDiscovery serviceDiscovery;
+    private Set<String> deployedVerticles = new HashSet<>();
 
     @Override
     public void start(Future<Void> startFuture) throws Exception {
@@ -55,6 +66,9 @@ public class MainVerticle extends AbstractVerticle {
             httpPort = config().getInteger("http.port", DEFAULT_HTTP_PORT);
         }
         logger.info("Using http port " + httpPort);
+
+        // verticles (subscriptions) are going to be registered in a discovery service
+        serviceDiscovery = ServiceDiscovery.create(vertx);
 
         // create the routes that are recognised by the service
         // and send requests to appropriate handler/catalog
@@ -95,6 +109,7 @@ public class MainVerticle extends AbstractVerticle {
                         startFuture.fail(result.cause());
                     }
                 });
+
     }
 
     /**
@@ -142,19 +157,42 @@ public class MainVerticle extends AbstractVerticle {
         logger.info("received a put request, subscription_id=" + subscriptionId);
 
         if (subscriptionId == null) {
-            routingContext
-                    .response()
-                    .setStatusCode(BAD_REQUEST.code())
-                    .end(new JsonObject()
-                            .put("code", BAD_REQUEST.code())
-                            .put("message", BAD_REQUEST.reasonPhrase())
-                            .encodePrettily());
+            endWithError(routingContext, BAD_REQUEST);
         } else {
+            routingContext.request().bodyHandler(body -> {
+                final String bodyAsString = body.toString();
+                try {
+                    Subscription subscription = Json.decodeValue(bodyAsString, Subscription.class);
+                    serviceDiscovery.getRecord(new JsonObject()
+                            .put("name", subscriptionId), recordAR -> {
+                        if (recordAR.failed()) {
+                            logger.error("Error while retrieving verticle's record");
+                            endWithError(routingContext, INTERNAL_SERVER_ERROR);
+                        } else {
+                            Record record = recordAR.result();
+                            if (record == null) {
+                                // no record found, create one
+                                vertx.deployVerticle("com.digisoft.mss.SubscriptionVerticle",
+                                        asyncResult -> {
+                                            if (asyncResult.failed()) {
+                                                endWithError(routingContext, INTERNAL_SERVER_ERROR);
+                                            } else {
+                                                deployedVerticles.add(asyncResult.result());
+                                            }
+                                        });
+                            }
+                        }
+                    });
+                } catch (DecodeException e) {
+                    logger.error("Error decoding '" + bodyAsString + "' as a subscription", e);
+                    endWithError(routingContext, BAD_REQUEST);
+                }
+            });
             // TODO replace this fake response with a real one
-            routingContext
-                    .response()
-                    .setStatusCode(CREATED.code())
-                    .end("{}");
+//            routingContext
+//                    .response()
+//                    .setStatusCode(CREATED.code())
+//                    .end("{}");
         }
 
     }
@@ -174,5 +212,21 @@ public class MainVerticle extends AbstractVerticle {
                 .response()
                 .setStatusCode(CREATED.code())
                 .end("{}");
+    }
+
+    /**
+     * Ends a routingContext's response with an error object.
+     *
+     * @param routingContext context who's response will be ended
+     * @param responseStatus http response status to be given
+     */
+    private void endWithError(RoutingContext routingContext, HttpResponseStatus responseStatus) {
+        routingContext
+                .response()
+                .setStatusCode(responseStatus.code())
+                .end(Json.encodePrettily(
+                        new com.digisoft.mss.model.Error(
+                                responseStatus.code(),
+                                responseStatus.reasonPhrase())));
     }
 }
