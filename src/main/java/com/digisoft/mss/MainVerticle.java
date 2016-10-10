@@ -8,7 +8,6 @@ import java.util.Set;
 
 import io.netty.handler.codec.http.HttpResponseStatus;
 import io.vertx.core.AbstractVerticle;
-import io.vertx.core.DeploymentOptions;
 import io.vertx.core.Future;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.json.DecodeException;
@@ -20,8 +19,7 @@ import io.vertx.core.logging.LoggerFactory;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.RoutingContext;
 import io.vertx.ext.web.handler.CorsHandler;
-import io.vertx.servicediscovery.Record;
-import io.vertx.servicediscovery.ServiceDiscovery;
+import io.vertx.rabbitmq.RabbitMQClient;
 
 import static io.netty.handler.codec.http.HttpHeaderValues.APPLICATION_JSON;
 import static io.netty.handler.codec.http.HttpResponseStatus.BAD_REQUEST;
@@ -40,10 +38,9 @@ public class MainVerticle extends AbstractVerticle {
     private static final String DEFAULT_RABBIT_HOST = "rabbit";
     private static final int DEFAULT_RABBIT_PORT = 5672;
     private static final int DEFAULT_HTTP_PORT = 8080;
-
+    private static final String EXCHANGE_NAME = "mss.direct";
+    private RabbitMQClient rabbitMQClient;
     private Logger logger = LoggerFactory.getLogger(MainVerticle.class);
-    private ServiceDiscovery serviceDiscovery;
-    private Set<String> deployedVerticles = new HashSet<>();
 
     @Override
     public void start(Future<Void> startFuture) throws Exception {
@@ -67,8 +64,26 @@ public class MainVerticle extends AbstractVerticle {
         }
         logger.info("Using http port " + httpPort);
 
-        // verticles (subscriptions) are going to be registered in a discovery service
-        serviceDiscovery = ServiceDiscovery.create(vertx);
+        // a rabbitMQ client is needed
+        rabbitMQClient = RabbitMQClient.create(vertx, new JsonObject()
+                .put("host", rabbitHost)
+                .put("port", rabbitPort));
+        rabbitMQClient.start(startResult -> {
+            if (startResult.succeeded()) {
+                logger.info("RabbitMQ client has been started");
+                rabbitMQClient.exchangeDeclare(EXCHANGE_NAME, "direct", false, true, exchangeDeclarationResult -> {
+                    if (exchangeDeclarationResult.failed()) {
+                        logger.error("Can't declare the '" + EXCHANGE_NAME + "' exchange", exchangeDeclarationResult.cause());
+                        startFuture.fail(exchangeDeclarationResult.toString());
+                    } else {
+                        logger.info("Exchange '" + EXCHANGE_NAME + "' has been declared");
+                    }
+                });
+            } else {
+                logger.error("RabbitMQ client couldn't start", startResult.cause());
+                startFuture.fail(startResult.toString());
+            }
+        });
 
         // create the routes that are recognised by the service
         // and send requests to appropriate handler/catalog
@@ -105,11 +120,29 @@ public class MainVerticle extends AbstractVerticle {
                         logger.info("Messaging server started");
                         startFuture.complete();
                     } else {
-                        logger.error("Couldn't start messaging server");
+                        logger.error("Couldn't start messaging server", result.cause());
                         startFuture.fail(result.cause());
                     }
                 });
 
+    }
+
+    @Override
+    public void stop() throws Exception {
+        rabbitMQClient.exchangeDelete(EXCHANGE_NAME, exchangeDeletionResult -> {
+            if (exchangeDeletionResult.succeeded()) {
+                logger.info("'" + EXCHANGE_NAME + "' exchange has been deleted");
+                rabbitMQClient.stop(stopResult -> {
+                    if (stopResult.succeeded()) {
+                        logger.info("RabbitMQ client has been stopped");
+                    } else {
+                        logger.error("RabbitMQ client couldn't stop", stopResult.cause());
+                    }
+                });
+            } else {
+                logger.error("Exchange '" + EXCHANGE_NAME + "' can't be deleted", exchangeDeletionResult.cause());
+            }
+        });
     }
 
     /**
@@ -157,42 +190,49 @@ public class MainVerticle extends AbstractVerticle {
         logger.info("received a put request, subscription_id=" + subscriptionId);
 
         if (subscriptionId == null) {
-            endWithError(routingContext, BAD_REQUEST);
+            endWithCode(routingContext, BAD_REQUEST);
         } else {
             routingContext.request().bodyHandler(body -> {
                 final String bodyAsString = body.toString();
                 try {
                     Subscription subscription = Json.decodeValue(bodyAsString, Subscription.class);
-                    serviceDiscovery.getRecord(new JsonObject()
-                            .put("name", subscriptionId), recordAR -> {
-                        if (recordAR.failed()) {
-                            logger.error("Error while retrieving verticle's record");
-                            endWithError(routingContext, INTERNAL_SERVER_ERROR);
+                    rabbitMQClient.queueDelete(subscriptionId, queueDeletionResult -> {
+                        if (queueDeletionResult.succeeded()) {
+                            logger.info("Queue '" + subscriptionId + "' has been deleted");
                         } else {
-                            Record record = recordAR.result();
-                            if (record == null) {
-                                // no record found, create one
-                                vertx.deployVerticle("com.digisoft.mss.SubscriptionVerticle",
-                                        asyncResult -> {
-                                            if (asyncResult.failed()) {
-                                                endWithError(routingContext, INTERNAL_SERVER_ERROR);
-                                            } else {
-                                                deployedVerticles.add(asyncResult.result());
-                                            }
-                                        });
-                            }
+                            logger.warn("Queue '" + subscriptionId + "' couldn't be deleted", queueDeletionResult.cause());
                         }
+                        rabbitMQClient.queueDeclare(subscriptionId, false, false, false, queueDeclarationResult -> {
+                            if (queueDeclarationResult.succeeded()) {
+                                logger.info("Queue '" + subscriptionId + "' has been declared");
+
+                                subscription.getMessageTypes().forEach(messageType -> {
+                                    rabbitMQClient.queueBind(subscriptionId, EXCHANGE_NAME, messageType, queueBindResult -> {
+                                        if (queueBindResult.succeeded()) {
+                                            logger.info("Queue '" + subscriptionId
+                                                    + "' has been bound to exchange '" + EXCHANGE_NAME + "' with routing key "
+                                                    + messageType);
+                                            endWithCode(routingContext, OK);
+                                        } else {
+                                            logger.error("Queue '" + subscriptionId
+                                                    + "' can't be bound to exchange '" + EXCHANGE_NAME + "' with routing key "
+                                                    + messageType, queueBindResult.cause());
+                                            endWithCode(routingContext, INTERNAL_SERVER_ERROR);
+                                        }
+                                    });
+                                });
+                            } else {
+                                logger.error("Queue '" + subscriptionId
+                                        + "' couldn't be declared", queueDeclarationResult.cause());
+                                endWithCode(routingContext, INTERNAL_SERVER_ERROR);
+                            }
+                        });
                     });
                 } catch (DecodeException e) {
                     logger.error("Error decoding '" + bodyAsString + "' as a subscription", e);
-                    endWithError(routingContext, BAD_REQUEST);
+                    endWithCode(routingContext, BAD_REQUEST);
                 }
             });
-            // TODO replace this fake response with a real one
-//            routingContext
-//                    .response()
-//                    .setStatusCode(CREATED.code())
-//                    .end("{}");
         }
 
     }
@@ -220,7 +260,7 @@ public class MainVerticle extends AbstractVerticle {
      * @param routingContext context who's response will be ended
      * @param responseStatus http response status to be given
      */
-    private void endWithError(RoutingContext routingContext, HttpResponseStatus responseStatus) {
+    private void endWithCode(RoutingContext routingContext, HttpResponseStatus responseStatus) {
         routingContext
                 .response()
                 .setStatusCode(responseStatus.code())
