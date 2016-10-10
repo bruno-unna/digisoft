@@ -33,6 +33,8 @@ The message subscription service must expose a RESTful interface for operations:
 * Clean, maintainable code must be used.
 * Good programming practices should be displayed.
 
+![Use case diagram](use_cases.png)
+
 ## Solution
 
 It is nowadays commonly understood that expressing distributed systems in terms of micro-services provides a strong support towards a domain-based, scalable, maintainable, long-term solution.
@@ -70,33 +72,39 @@ TBD
 
 #### <a name="how_to_run"></a>How to run
 
-TODO change this to reflect reality.
-
 1. Make sure you have the following tools available:
     - A Java 8 JDK.
     - Maven builder (tested with version 3.3.9).
-    - A `docker` client available (tested with version 1.12.1).
-    - `docker-compose` (tested with version 1.8.0).
+    - If you want to try the `docker` approach:
+      - A `docker` client available (tested with version 1.12.1).
+      - `docker-compose` (tested with version 1.8.0).
 1. Clone [this repository](https://github.com/bruno-unna/digisoft).
 1. Within the base directory of the project, run `mvn package`.
-1. Run `docker-compose -p digisoft up`.
-1. Connect using a browser to [the proxy server](http://localhost:8080/pcw/PCW45-12345-12345-1234X/address/ie/D02X285).
-1. Play changing the values in the URL and observe the cache hits and misses in the console.
+1. If you want to run the fat jar (as opposed to the docker image):
+    1. Make sure you have an accessible RabbitMQ server, with default security configuration.  
+       If you don't, you can avail of the `docker` image provided:  
+       ```
+       docker run -d --name redis -p "5672:5672" -p "25672:25672" -p "15672:15672" rabbitmq:3-management
+       ```
+       Or alternatively (if you have docker-compose):
+       ```
+       docker-compose up -d rabbit
+       ```
+    1. Execute the jar file:
+       ```
+       java -jar target/mss-0.1.0-fat.jar -conf target/classes/config.json
+       ```
+       Configuration values can be set in the `target/classes/config.json` file, or can be supplied as environment definitions (with the `-D` option).
+1. If, on the other hand, you prefer using `docker-compose` (recommended), just execute:
+   ```
+   docker-compose -p digisoft up
+   ```
+1. Connect using the REST client of your choice to the service endpoints (by default at port `8080`). A swagger editor is provided in the `docker-compose` file, and a swagger yaml file is available at the root of the project. The service includes CORS support, so that the endpoints can be invoked from the Swagger editor.
+1. Use the [RabbitMQ management console](http://localhost:15672/) to explore the behaviour of the message broker.
 
 #### Next steps and enhancements
 
-TODO change this too.
-
-- Adding a TTL (time to live) to the cached information. This is trivial 
-  when using Redis but needs discussion and needs to be configured 
-  in the solution.
-- Writing integration tests. Several libraries exist to help with 
-  this, AssertJ and Rest-Assured are known to play nicely with Vert.x. 
-  It is recognised that this should have been done beforehand, but 
-  time constraints forced the lowering of its priority.
-- Providing ex-ante thorough unit tests. It is generally preferred 
-  to write tests first (TDD), specially in complex or multi-component 
-  systems. Again, time constraints limited very much the amount 
-  of tests that were automated in the solution.
-- Soak test the solution, hammering and stressing it to discover 
-  how well it can potentially scale. JMeter can be used for this.
+- Explore the use of reactive extensions library, to avoid the deep level of nesting seen in the callback definitions.
+- Writing integration tests. Several libraries exist to help with this, AssertJ and Rest-Assured are known to play nicely with Vert.x. It is recognised that this should have been done beforehand, but time constraints forced the lowering of its priority.
+- Providing ex-ante thorough unit tests. It is generally preferred to write tests first (TDD), specially in complex or multi-component systems. Again, time constraints limited very much the amount of tests that were automated in the solution.
+- Soak test the solution, hammering and stressing it to discover how well it can potentially scale. JMeter can be used for this.

@@ -78,7 +78,7 @@ paths:
           schema:
             $ref: '#/definitions/Message'
       responses:
-        201:
+        202:
           description: Message has been sent. Null response.
         default:
           description: Unexpected error.
