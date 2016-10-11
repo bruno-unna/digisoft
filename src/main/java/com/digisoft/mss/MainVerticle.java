@@ -70,31 +70,12 @@ public class MainVerticle extends AbstractVerticle {
         logger.info("Using http port " + httpPort);
 
         // a rabbitMQ client is needed
-        rabbitMQClient = RabbitMQClient.create(vertx, new JsonObject()
-                .put("host", rabbitHost)
-                .put("port", rabbitPort));
-        rabbitMQClient.start(startResult -> {
-            if (startResult.succeeded()) {
-                logger.info("RabbitMQ client has been started");
-                rabbitMQClient.exchangeDeclare(EXCHANGE_NAME, "direct", true, false, exchangeDeclarationResult -> {
-                    if (exchangeDeclarationResult.failed()) {
-                        logger.error("Can't declare the '" + EXCHANGE_NAME + "' exchange", exchangeDeclarationResult.cause());
-                        startFuture.fail(exchangeDeclarationResult.toString());
-                    } else {
-                        logger.info("Exchange '" + EXCHANGE_NAME + "' has been declared");
-                    }
-                });
-            } else {
-                logger.error("RabbitMQ client couldn't start", startResult.cause());
-                startFuture.fail(startResult.toString());
-            }
-        });
+        setupRabbitMQ(startFuture, rabbitHost, rabbitPort);
 
         // create the routes that are recognised by the service
         // and send requests to appropriate handler/catalog
+        // (allow CORS, so that we can use swagger -and other tools- for testing)
         Router router = Router.router(vertx);
-
-        // allow CORS, so that we can use swagger (and other tools) for testing
 
         Set<HttpMethod> allowedMethods = new HashSet<>();
         allowedMethods.add(GET);
@@ -146,6 +127,28 @@ public class MainVerticle extends AbstractVerticle {
                 });
             } else {
                 logger.error("Exchange '" + EXCHANGE_NAME + "' can't be deleted", exchangeDeletionResult.cause());
+            }
+        });
+    }
+
+    private void setupRabbitMQ(Future<Void> future, String rabbitHost, Integer rabbitPort) {
+        rabbitMQClient = RabbitMQClient.create(vertx, new JsonObject()
+                .put("host", rabbitHost)
+                .put("port", rabbitPort));
+        rabbitMQClient.start(startResult -> {
+            if (startResult.succeeded()) {
+                logger.info("RabbitMQ client has been started");
+                rabbitMQClient.exchangeDeclare(EXCHANGE_NAME, "direct", true, false, exchangeDeclarationResult -> {
+                    if (exchangeDeclarationResult.failed()) {
+                        logger.error("Can't declare the '" + EXCHANGE_NAME + "' exchange", exchangeDeclarationResult.cause());
+                        future.fail(exchangeDeclarationResult.toString());
+                    } else {
+                        logger.info("Exchange '" + EXCHANGE_NAME + "' has been declared");
+                    }
+                });
+            } else {
+                logger.error("RabbitMQ client couldn't start", startResult.cause());
+                future.fail(startResult.toString());
             }
         });
     }
