@@ -14,6 +14,7 @@ import io.netty.handler.codec.http.HttpResponseStatus;
 import io.vertx.core.AbstractVerticle;
 import io.vertx.core.Future;
 import io.vertx.core.http.HttpMethod;
+import io.vertx.core.http.HttpServerResponse;
 import io.vertx.core.json.DecodeException;
 import io.vertx.core.json.Json;
 import io.vertx.core.json.JsonObject;
@@ -160,8 +161,6 @@ public class MainVerticle extends AbstractVerticle {
      * @param routingContext routing context as provided by vertx-web
      */
     private void handleGetSubscription(RoutingContext routingContext) {
-        routingContext.response().putHeader(CONTENT_TYPE.toString(), APPLICATION_JSON);
-
         String subscriptionId = routingContext.request().getParam("id");
         logger.info("received a get request, subscription_id=" + subscriptionId);
 
@@ -171,9 +170,7 @@ public class MainVerticle extends AbstractVerticle {
             Map<String, Integer> subscriptionCounters = counters.entrySet().stream()
                     .filter(stringMapEntry -> stringMapEntry.getValue().containsKey(subscriptionId))
                     .collect(Collectors.toMap(Map.Entry::getKey, entry -> entry.getValue().get(subscriptionId)));
-            routingContext.response()
-                    .setStatusCode(OK.code())
-                    .end(Json.encodePrettily(subscriptionCounters));
+            endWithStatus(routingContext, OK, Json.encodePrettily(subscriptionCounters));
         }
     }
 
@@ -184,8 +181,6 @@ public class MainVerticle extends AbstractVerticle {
      * @param routingContext routing context as provided by vertx-web
      */
     private void handlePutSubscription(RoutingContext routingContext) {
-        routingContext.response().putHeader(CONTENT_TYPE.toString(), APPLICATION_JSON);
-
         final String subscriptionId = routingContext.request().getParam("id");
         logger.info("received a put request, subscription id=" + subscriptionId);
 
@@ -231,10 +226,8 @@ public class MainVerticle extends AbstractVerticle {
                                 if (bindError[0]) {
                                     endWithError(routingContext, INTERNAL_SERVER_ERROR);
                                 } else {
-                                    routingContext
-                                            .response()
-                                            .setStatusCode(CREATED.code())
-                                            .end("{}");
+                                    // this is the happy path:
+                                    endWithStatus(routingContext, CREATED, "{}");
                                 }
                             } else {
                                 logger.error("Queue '" + subscriptionId
@@ -258,9 +251,6 @@ public class MainVerticle extends AbstractVerticle {
      * @param routingContext routing context as provided by vertx-web
      */
     private void handlePostMessage(RoutingContext routingContext) {
-        routingContext.response().putHeader(CONTENT_TYPE.toString(), APPLICATION_JSON);
-
-
         routingContext.request().bodyHandler(body -> {
             final String bodyAsString = body.toString();
             logger.info("received a post request with body " + bodyAsString);
@@ -278,10 +268,7 @@ public class MainVerticle extends AbstractVerticle {
                                 if (publishResult.succeeded()) {
                                     counters.get(messageType).entrySet()
                                             .forEach(entry -> entry.setValue(entry.getValue() + 1));
-                                    routingContext
-                                            .response()
-                                            .setStatusCode(ACCEPTED.code())
-                                            .end("{}");
+                                    endWithStatus(routingContext, ACCEPTED, "{}");
                                 } else {
                                     logger.error("Can't publish message " + message, publishResult.cause());
                                     endWithError(routingContext, INTERNAL_SERVER_ERROR);
@@ -298,18 +285,29 @@ public class MainVerticle extends AbstractVerticle {
     }
 
     /**
+     * Ends a routingContext's response with a given status code and result.
+     *
+     * @param routingContext context who's response will be ended
+     * @param status         http response status to be given
+     * @param result         contents of the response
+     */
+    private void endWithStatus(RoutingContext routingContext, HttpResponseStatus status, String result) {
+        HttpServerResponse response = routingContext.response();
+        response.putHeader(CONTENT_TYPE.toString(), APPLICATION_JSON);
+        response.setStatusCode(status.code()).end(result);
+    }
+
+    /**
      * Ends a routingContext's response with an error object.
      *
      * @param routingContext context who's response will be ended
      * @param responseStatus http response status to be given
      */
     private void endWithError(RoutingContext routingContext, HttpResponseStatus responseStatus) {
-        routingContext
-                .response()
-                .setStatusCode(responseStatus.code())
-                .end(Json.encodePrettily(
-                        new com.digisoft.mss.model.Error(
-                                responseStatus.code(),
-                                responseStatus.reasonPhrase())));
+        endWithStatus(routingContext,
+                responseStatus,
+                Json.encodePrettily(new com.digisoft.mss.model.Error(responseStatus.code(),
+                        responseStatus.reasonPhrase())));
     }
+
 }
