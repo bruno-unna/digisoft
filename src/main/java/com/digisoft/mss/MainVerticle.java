@@ -213,16 +213,25 @@ public class MainVerticle extends AbstractVerticle {
                     logger.warn("Queue '" + subscriptionId + "' couldn't be deleted", queueDeletionResult.cause());
                 }
             }).compose(deletionJson -> {
+
                 // when the queue has been deleted, declare it anew:
+
                 Future<JsonObject> queueDeclarationFuture = Future.future();
                 rabbitMQClient.queueDeclare(subscriptionId, false, false, false, queueDeclarationFuture.completer());
+
                 return queueDeclarationFuture;
             }).setHandler(queueDeclarationResult -> {
                 if (queueDeclarationResult.succeeded()) {
                     logger.info("Queue '" + subscriptionId + "' has been declared");
+                } else {
+                    logger.warn("Queue '" + subscriptionId + "' couldn't be declared", queueDeclarationResult.cause());
                 }
             }).compose(declarationJson -> {
-                // when the queue has been declared, bind it to the exchange (as many times as needed):
+
+                // when the queue has been declared, bind it to the exchange (as many times as needed);
+                // note that each bind happens in its own future,
+                // and that all of them need to be successful
+
                 List<Future> listOfBindFutures = subscription.getMessageTypes().stream().map(messageType -> {
                     if (!counters.containsKey(messageType)) {
                         counters.put(messageType, new HashMap<>());
@@ -233,11 +242,15 @@ public class MainVerticle extends AbstractVerticle {
                     }
                     Future<Void> bindFuture = Future.future();
                     rabbitMQClient.queueBind(subscriptionId, EXCHANGE_NAME, messageType, bindFuture.completer());
+
                     return bindFuture;
                 }).collect(Collectors.toList());
+
                 return CompositeFuture.all(listOfBindFutures);
             }).setHandler(result -> {
+
                 // when all queues have been bound to the exchange, end
+
                 if (result.succeeded()) {
                     endWithStatus(routingContext, CREATED, "{}");
                 } else {
