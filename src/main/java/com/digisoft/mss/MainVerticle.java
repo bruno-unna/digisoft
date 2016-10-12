@@ -204,6 +204,7 @@ public class MainVerticle extends AbstractVerticle {
             }
 
             // start by deleting the queue:
+
             Future<JsonObject> queueDeletionFuture = Future.future();
             rabbitMQClient.queueDelete(subscriptionId, queueDeletionFuture.completer());
             queueDeletionFuture.setHandler(queueDeletionResult -> {
@@ -224,7 +225,8 @@ public class MainVerticle extends AbstractVerticle {
                 if (queueDeclarationResult.succeeded()) {
                     logger.info("Queue '" + subscriptionId + "' has been declared");
                 } else {
-                    logger.warn("Queue '" + subscriptionId + "' couldn't be declared", queueDeclarationResult.cause());
+                    logger.error("Queue '" + subscriptionId + "' couldn't be declared", queueDeclarationResult.cause());
+                    endWithError(routingContext, INTERNAL_SERVER_ERROR);
                 }
             }).compose(declarationJson -> {
 
