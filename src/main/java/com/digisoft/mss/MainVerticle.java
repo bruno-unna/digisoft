@@ -272,33 +272,40 @@ public class MainVerticle extends AbstractVerticle {
         routingContext.request().bodyHandler(body -> {
             final String bodyAsString = body.toString();
             logger.info("received a post request with body " + bodyAsString);
+
+            final Message message;
             try {
-                Message message = Json.decodeValue(bodyAsString, Message.class);
-                final String messageType = message.getMessageType();
-                if (!counters.containsKey(messageType)) {
-                    logger.warn("Trying to send a message of an unknown type");
-                    endWithError(routingContext, BAD_REQUEST);
-                } else {
-                    rabbitMQClient.basicPublish(EXCHANGE_NAME,
-                            messageType,
-                            new JsonObject().put("body", message.getMessageBody()),
-                            publishResult -> {
-                                if (publishResult.succeeded()) {
-                                    counters.get(messageType).entrySet()
-                                            .forEach(entry -> entry.setValue(entry.getValue() + 1));
-                                    endWithStatus(routingContext, ACCEPTED, "{}");
-                                } else {
-                                    logger.error("Can't publish message " + message, publishResult.cause());
-                                    endWithError(routingContext, INTERNAL_SERVER_ERROR);
-                                }
-
-                            });
-
-                }
+                message = Json.decodeValue(bodyAsString, Message.class);
             } catch (DecodeException e) {
                 logger.error("Error decoding '" + bodyAsString + "' as a message", e);
                 endWithError(routingContext, BAD_REQUEST);
+                return;
             }
+
+            final String messageType = message.getMessageType();
+            if (!counters.containsKey(messageType)) {
+                logger.warn("Trying to send a message of an unknown type");
+                endWithError(routingContext, BAD_REQUEST);
+                return;
+            }
+
+            Future<Void> publishFuture = Future.future();
+
+            rabbitMQClient.basicPublish(EXCHANGE_NAME,
+                    messageType,
+                    new JsonObject().put("body", message.getMessageBody()),
+                    publishFuture.completer());
+
+            publishFuture.setHandler(publishResult -> {
+                if (publishResult.succeeded()) {
+                    counters.get(messageType).entrySet()
+                            .forEach(entry -> entry.setValue(entry.getValue() + 1));
+                    endWithStatus(routingContext, ACCEPTED, "{}");
+                } else {
+                    logger.error("Can't publish message " + message, publishResult.cause());
+                    endWithError(routingContext, INTERNAL_SERVER_ERROR);
+                }
+            });
         });
     }
 
