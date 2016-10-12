@@ -6,12 +6,14 @@ import com.digisoft.mss.model.Subscription;
 
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
 import io.netty.handler.codec.http.HttpResponseStatus;
 import io.vertx.core.AbstractVerticle;
+import io.vertx.core.CompositeFuture;
 import io.vertx.core.Future;
 import io.vertx.core.http.HttpMethod;
 import io.vertx.core.http.HttpServerResponse;
@@ -186,62 +188,63 @@ public class MainVerticle extends AbstractVerticle {
 
         if (subscriptionId == null) {
             endWithError(routingContext, BAD_REQUEST);
-        } else {
-            routingContext.request().bodyHandler(body -> {
-                final String bodyAsString = body.toString();
-                try {
-                    final Subscription subscription = Json.decodeValue(bodyAsString, Subscription.class);
-                    rabbitMQClient.queueDelete(subscriptionId, queueDeletionResult -> {
-                        if (queueDeletionResult.succeeded()) {
-                            logger.info("Queue '" + subscriptionId + "' has been deleted");
-                        } else {
-                            logger.warn("Queue '" + subscriptionId + "' couldn't be deleted", queueDeletionResult.cause());
-                        }
-                        rabbitMQClient.queueDeclare(subscriptionId, false, false, false, queueDeclarationResult -> {
-                            if (queueDeclarationResult.succeeded()) {
-                                logger.info("Queue '" + subscriptionId + "' has been declared");
+            return;
+        }
 
-                                final boolean[] bindError = {false};
-                                subscription.getMessageTypes().forEach(messageType -> {
-                                    rabbitMQClient.queueBind(subscriptionId, EXCHANGE_NAME, messageType, queueBindResult -> {
-                                        if (queueBindResult.succeeded()) {
-                                            logger.info("Queue '" + subscriptionId
-                                                    + "' has been bound to exchange '" + EXCHANGE_NAME + "' with routing key "
-                                                    + messageType);
-                                        } else {
-                                            bindError[0] = true;
-                                            logger.error("Queue '" + subscriptionId
-                                                    + "' can't be bound to exchange '" + EXCHANGE_NAME + "' with routing key "
-                                                    + messageType, queueBindResult.cause());
-                                        }
-                                    });
-                                    if (!counters.containsKey(messageType)) {
-                                        counters.put(messageType, new HashMap<>());
-                                    }
-                                    final Map<String, Integer> counter = counters.get(messageType);
-                                    if (!counter.containsKey(subscriptionId)) {
-                                        counter.put(subscriptionId, 0);
-                                    }
-                                });
-                                if (bindError[0]) {
-                                    endWithError(routingContext, INTERNAL_SERVER_ERROR);
-                                } else {
-                                    // this is the happy path:
-                                    endWithStatus(routingContext, CREATED, "{}");
-                                }
-                            } else {
-                                logger.error("Queue '" + subscriptionId
-                                        + "' couldn't be declared", queueDeclarationResult.cause());
-                                endWithError(routingContext, INTERNAL_SERVER_ERROR);
-                            }
-                        });
-                    });
-                } catch (DecodeException e) {
-                    logger.error("Error decoding '" + bodyAsString + "' as a subscription", e);
-                    endWithError(routingContext, BAD_REQUEST);
+        routingContext.request().bodyHandler(body -> {
+            final String bodyAsString = body.toString();
+
+            final Subscription subscription;
+            try {
+                subscription = Json.decodeValue(bodyAsString, Subscription.class);
+            } catch (DecodeException e) {
+                logger.error("Error decoding '" + bodyAsString + "' as a subscription", e);
+                endWithError(routingContext, BAD_REQUEST);
+                return;
+            }
+
+            // start by deleting the queue:
+            Future<JsonObject> queueDeletionFuture = Future.future();
+            rabbitMQClient.queueDelete(subscriptionId, queueDeletionFuture.completer());
+            queueDeletionFuture.setHandler(queueDeletionResult -> {
+                if (queueDeletionResult.succeeded()) {
+                    logger.info("Queue '" + subscriptionId + "' has been deleted");
+                } else {
+                    logger.warn("Queue '" + subscriptionId + "' couldn't be deleted", queueDeletionResult.cause());
+                }
+            }).compose(deletionJson -> {
+                // when the queue has been deleted, declare it anew:
+                Future<JsonObject> queueDeclarationFuture = Future.future();
+                rabbitMQClient.queueDeclare(subscriptionId, false, false, false, queueDeclarationFuture.completer());
+                return queueDeclarationFuture;
+            }).setHandler(queueDeclarationResult -> {
+                if (queueDeclarationResult.succeeded()) {
+                    logger.info("Queue '" + subscriptionId + "' has been declared");
+                }
+            }).compose(declarationJson -> {
+                // when the queue has been declared, bind it to the exchange (as many times as needed):
+                List<Future> listOfBindFutures = subscription.getMessageTypes().stream().map(messageType -> {
+                    if (!counters.containsKey(messageType)) {
+                        counters.put(messageType, new HashMap<>());
+                    }
+                    final Map<String, Integer> counter = counters.get(messageType);
+                    if (!counter.containsKey(subscriptionId)) {
+                        counter.put(subscriptionId, 0);
+                    }
+                    Future<Void> bindFuture = Future.future();
+                    rabbitMQClient.queueBind(subscriptionId, EXCHANGE_NAME, messageType, bindFuture.completer());
+                    return bindFuture;
+                }).collect(Collectors.toList());
+                return CompositeFuture.all(listOfBindFutures);
+            }).setHandler(result -> {
+                // when all queues have been bound to the exchange, end
+                if (result.succeeded()) {
+                    endWithStatus(routingContext, CREATED, "{}");
+                } else {
+                    endWithError(routingContext, INTERNAL_SERVER_ERROR);
                 }
             });
-        }
+        });
 
     }
 
