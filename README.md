@@ -92,7 +92,7 @@ TBD
        ```
     1. Execute the jar file:  
        ```
-       java -jar target/mss-0.2.0-fat.jar -conf target/classes/config.json
+       java -jar target/mss-0.2.1-fat.jar -conf target/classes/config.json
        ```  
        Configuration values can be set in the `target/classes/config.json` file, or can be supplied as environment definitions (with the `-D` option).
 1. If, on the other hand, you prefer using `docker-compose` (recommended), just execute:  

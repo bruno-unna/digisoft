@@ -2,7 +2,7 @@ swagger: '2.0'
 info:
   title: Messsaging Subscription Service (MSS)
   description: Digicom's simple messaging subscription service.
-  version: "0.2.0"
+  version: "0.2.1"
 host: localhost:8080
 schemes:
   - http
