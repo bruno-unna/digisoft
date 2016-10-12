@@ -6,14 +6,17 @@ import com.digisoft.mss.model.Subscription;
 
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
 import io.netty.handler.codec.http.HttpResponseStatus;
 import io.vertx.core.AbstractVerticle;
+import io.vertx.core.CompositeFuture;
 import io.vertx.core.Future;
 import io.vertx.core.http.HttpMethod;
+import io.vertx.core.http.HttpServerResponse;
 import io.vertx.core.json.DecodeException;
 import io.vertx.core.json.Json;
 import io.vertx.core.json.JsonObject;
@@ -70,31 +73,12 @@ public class MainVerticle extends AbstractVerticle {
         logger.info("Using http port " + httpPort);
 
         // a rabbitMQ client is needed
-        rabbitMQClient = RabbitMQClient.create(vertx, new JsonObject()
-                .put("host", rabbitHost)
-                .put("port", rabbitPort));
-        rabbitMQClient.start(startResult -> {
-            if (startResult.succeeded()) {
-                logger.info("RabbitMQ client has been started");
-                rabbitMQClient.exchangeDeclare(EXCHANGE_NAME, "direct", true, false, exchangeDeclarationResult -> {
-                    if (exchangeDeclarationResult.failed()) {
-                        logger.error("Can't declare the '" + EXCHANGE_NAME + "' exchange", exchangeDeclarationResult.cause());
-                        startFuture.fail(exchangeDeclarationResult.toString());
-                    } else {
-                        logger.info("Exchange '" + EXCHANGE_NAME + "' has been declared");
-                    }
-                });
-            } else {
-                logger.error("RabbitMQ client couldn't start", startResult.cause());
-                startFuture.fail(startResult.toString());
-            }
-        });
+        setupRabbitMQ(startFuture, rabbitHost, rabbitPort);
 
         // create the routes that are recognised by the service
         // and send requests to appropriate handler/catalog
+        // (allow CORS, so that we can use swagger -and other tools- for testing)
         Router router = Router.router(vertx);
-
-        // allow CORS, so that we can use swagger (and other tools) for testing
 
         Set<HttpMethod> allowedMethods = new HashSet<>();
         allowedMethods.add(GET);
@@ -150,6 +134,28 @@ public class MainVerticle extends AbstractVerticle {
         });
     }
 
+    private void setupRabbitMQ(Future<Void> future, String rabbitHost, Integer rabbitPort) {
+        rabbitMQClient = RabbitMQClient.create(vertx, new JsonObject()
+                .put("host", rabbitHost)
+                .put("port", rabbitPort));
+        rabbitMQClient.start(startResult -> {
+            if (startResult.succeeded()) {
+                logger.info("RabbitMQ client has been started");
+                rabbitMQClient.exchangeDeclare(EXCHANGE_NAME, "direct", true, false, exchangeDeclarationResult -> {
+                    if (exchangeDeclarationResult.failed()) {
+                        logger.error("Can't declare the '" + EXCHANGE_NAME + "' exchange", exchangeDeclarationResult.cause());
+                        future.fail(exchangeDeclarationResult.toString());
+                    } else {
+                        logger.info("Exchange '" + EXCHANGE_NAME + "' has been declared");
+                    }
+                });
+            } else {
+                logger.error("RabbitMQ client couldn't start", startResult.cause());
+                future.fail(startResult.toString());
+            }
+        });
+    }
+
     /**
      * This HTTP-related method is responsible for handling the requests of subscription
      * definitions.
@@ -157,8 +163,6 @@ public class MainVerticle extends AbstractVerticle {
      * @param routingContext routing context as provided by vertx-web
      */
     private void handleGetSubscription(RoutingContext routingContext) {
-        routingContext.response().putHeader(CONTENT_TYPE.toString(), APPLICATION_JSON);
-
         String subscriptionId = routingContext.request().getParam("id");
         logger.info("received a get request, subscription_id=" + subscriptionId);
 
@@ -168,9 +172,7 @@ public class MainVerticle extends AbstractVerticle {
             Map<String, Integer> subscriptionCounters = counters.entrySet().stream()
                     .filter(stringMapEntry -> stringMapEntry.getValue().containsKey(subscriptionId))
                     .collect(Collectors.toMap(Map.Entry::getKey, entry -> entry.getValue().get(subscriptionId)));
-            routingContext.response()
-                    .setStatusCode(OK.code())
-                    .end(Json.encodePrettily(subscriptionCounters));
+            endWithStatus(routingContext, OK, Json.encodePrettily(subscriptionCounters));
         }
     }
 
@@ -181,71 +183,83 @@ public class MainVerticle extends AbstractVerticle {
      * @param routingContext routing context as provided by vertx-web
      */
     private void handlePutSubscription(RoutingContext routingContext) {
-        routingContext.response().putHeader(CONTENT_TYPE.toString(), APPLICATION_JSON);
-
         final String subscriptionId = routingContext.request().getParam("id");
         logger.info("received a put request, subscription id=" + subscriptionId);
 
         if (subscriptionId == null) {
             endWithError(routingContext, BAD_REQUEST);
-        } else {
-            routingContext.request().bodyHandler(body -> {
-                final String bodyAsString = body.toString();
-                try {
-                    final Subscription subscription = Json.decodeValue(bodyAsString, Subscription.class);
-                    rabbitMQClient.queueDelete(subscriptionId, queueDeletionResult -> {
-                        if (queueDeletionResult.succeeded()) {
-                            logger.info("Queue '" + subscriptionId + "' has been deleted");
-                        } else {
-                            logger.warn("Queue '" + subscriptionId + "' couldn't be deleted", queueDeletionResult.cause());
-                        }
-                        rabbitMQClient.queueDeclare(subscriptionId, false, false, false, queueDeclarationResult -> {
-                            if (queueDeclarationResult.succeeded()) {
-                                logger.info("Queue '" + subscriptionId + "' has been declared");
+            return;
+        }
 
-                                final boolean[] bindError = {false};
-                                subscription.getMessageTypes().forEach(messageType -> {
-                                    rabbitMQClient.queueBind(subscriptionId, EXCHANGE_NAME, messageType, queueBindResult -> {
-                                        if (queueBindResult.succeeded()) {
-                                            logger.info("Queue '" + subscriptionId
-                                                    + "' has been bound to exchange '" + EXCHANGE_NAME + "' with routing key "
-                                                    + messageType);
-                                        } else {
-                                            bindError[0] = true;
-                                            logger.error("Queue '" + subscriptionId
-                                                    + "' can't be bound to exchange '" + EXCHANGE_NAME + "' with routing key "
-                                                    + messageType, queueBindResult.cause());
-                                        }
-                                    });
-                                    if (!counters.containsKey(messageType)) {
-                                        counters.put(messageType, new HashMap<>());
-                                    }
-                                    final Map<String, Integer> counter = counters.get(messageType);
-                                    if (!counter.containsKey(subscriptionId)) {
-                                        counter.put(subscriptionId, 0);
-                                    }
-                                });
-                                if (bindError[0]) {
-                                    endWithError(routingContext, INTERNAL_SERVER_ERROR);
-                                } else {
-                                    routingContext
-                                            .response()
-                                            .setStatusCode(CREATED.code())
-                                            .end("{}");
-                                }
-                            } else {
-                                logger.error("Queue '" + subscriptionId
-                                        + "' couldn't be declared", queueDeclarationResult.cause());
-                                endWithError(routingContext, INTERNAL_SERVER_ERROR);
-                            }
-                        });
-                    });
-                } catch (DecodeException e) {
-                    logger.error("Error decoding '" + bodyAsString + "' as a subscription", e);
-                    endWithError(routingContext, BAD_REQUEST);
+        routingContext.request().bodyHandler(body -> {
+            final String bodyAsString = body.toString();
+
+            final Subscription subscription;
+            try {
+                subscription = Json.decodeValue(bodyAsString, Subscription.class);
+            } catch (DecodeException e) {
+                logger.error("Error decoding '" + bodyAsString + "' as a subscription", e);
+                endWithError(routingContext, BAD_REQUEST);
+                return;
+            }
+
+            // start by deleting the queue:
+
+            Future<JsonObject> queueDeletionFuture = Future.future();
+            rabbitMQClient.queueDelete(subscriptionId, queueDeletionFuture.completer());
+            queueDeletionFuture.setHandler(queueDeletionResult -> {
+                if (queueDeletionResult.succeeded()) {
+                    logger.info("Queue '" + subscriptionId + "' has been deleted");
+                } else {
+                    logger.warn("Queue '" + subscriptionId + "' couldn't be deleted", queueDeletionResult.cause());
+                }
+            }).compose(deletionJson -> {
+
+                // when the queue has been deleted, declare it anew:
+
+                Future<JsonObject> queueDeclarationFuture = Future.future();
+                rabbitMQClient.queueDeclare(subscriptionId, false, false, false, queueDeclarationFuture.completer());
+
+                return queueDeclarationFuture;
+            }).setHandler(queueDeclarationResult -> {
+                if (queueDeclarationResult.succeeded()) {
+                    logger.info("Queue '" + subscriptionId + "' has been declared");
+                } else {
+                    logger.error("Queue '" + subscriptionId + "' couldn't be declared", queueDeclarationResult.cause());
+                    endWithError(routingContext, INTERNAL_SERVER_ERROR);
+                }
+            }).compose(declarationJson -> {
+
+                // when the queue has been declared, bind it to the exchange (as many times as needed);
+                // note that each bind happens in its own future,
+                // and that all of them need to be successful
+
+                List<Future> listOfBindFutures = subscription.getMessageTypes().stream().map(messageType -> {
+                    if (!counters.containsKey(messageType)) {
+                        counters.put(messageType, new HashMap<>());
+                    }
+                    final Map<String, Integer> counter = counters.get(messageType);
+                    if (!counter.containsKey(subscriptionId)) {
+                        counter.put(subscriptionId, 0);
+                    }
+                    Future<Void> bindFuture = Future.future();
+                    rabbitMQClient.queueBind(subscriptionId, EXCHANGE_NAME, messageType, bindFuture.completer());
+
+                    return bindFuture;
+                }).collect(Collectors.toList());
+
+                return CompositeFuture.all(listOfBindFutures);
+            }).setHandler(result -> {
+
+                // when all queues have been bound to the exchange, end
+
+                if (result.succeeded()) {
+                    endWithStatus(routingContext, CREATED, "{}");
+                } else {
+                    endWithError(routingContext, INTERNAL_SERVER_ERROR);
                 }
             });
-        }
+        });
 
     }
 
@@ -255,43 +269,57 @@ public class MainVerticle extends AbstractVerticle {
      * @param routingContext routing context as provided by vertx-web
      */
     private void handlePostMessage(RoutingContext routingContext) {
-        routingContext.response().putHeader(CONTENT_TYPE.toString(), APPLICATION_JSON);
-
-
         routingContext.request().bodyHandler(body -> {
             final String bodyAsString = body.toString();
             logger.info("received a post request with body " + bodyAsString);
+
+            final Message message;
             try {
-                Message message = Json.decodeValue(bodyAsString, Message.class);
-                final String messageType = message.getMessageType();
-                if (!counters.containsKey(messageType)) {
-                    logger.warn("Trying to send a message of an unknown type");
-                    endWithError(routingContext, BAD_REQUEST);
-                } else {
-                    rabbitMQClient.basicPublish(EXCHANGE_NAME,
-                            messageType,
-                            new JsonObject().put("body", message.getMessageBody()),
-                            publishResult -> {
-                                if (publishResult.succeeded()) {
-                                    counters.get(messageType).entrySet()
-                                            .forEach(entry -> entry.setValue(entry.getValue() + 1));
-                                    routingContext
-                                            .response()
-                                            .setStatusCode(ACCEPTED.code())
-                                            .end("{}");
-                                } else {
-                                    logger.error("Can't publish message " + message, publishResult.cause());
-                                    endWithError(routingContext, INTERNAL_SERVER_ERROR);
-                                }
-
-                            });
-
-                }
+                message = Json.decodeValue(bodyAsString, Message.class);
             } catch (DecodeException e) {
                 logger.error("Error decoding '" + bodyAsString + "' as a message", e);
                 endWithError(routingContext, BAD_REQUEST);
+                return;
             }
+
+            final String messageType = message.getMessageType();
+            if (!counters.containsKey(messageType)) {
+                logger.warn("Trying to send a message of an unknown type");
+                endWithError(routingContext, BAD_REQUEST);
+                return;
+            }
+
+            Future<Void> publishFuture = Future.future();
+
+            rabbitMQClient.basicPublish(EXCHANGE_NAME,
+                    messageType,
+                    new JsonObject().put("body", message.getMessageBody()),
+                    publishFuture.completer());
+
+            publishFuture.setHandler(publishResult -> {
+                if (publishResult.succeeded()) {
+                    counters.get(messageType).entrySet()
+                            .forEach(entry -> entry.setValue(entry.getValue() + 1));
+                    endWithStatus(routingContext, ACCEPTED, "{}");
+                } else {
+                    logger.error("Can't publish message " + message, publishResult.cause());
+                    endWithError(routingContext, INTERNAL_SERVER_ERROR);
+                }
+            });
         });
+    }
+
+    /**
+     * Ends a routingContext's response with a given status code and result.
+     *
+     * @param routingContext context who's response will be ended
+     * @param status         http response status to be given
+     * @param result         contents of the response
+     */
+    private void endWithStatus(RoutingContext routingContext, HttpResponseStatus status, String result) {
+        HttpServerResponse response = routingContext.response();
+        response.putHeader(CONTENT_TYPE.toString(), APPLICATION_JSON);
+        response.setStatusCode(status.code()).end(result);
     }
 
     /**
@@ -301,12 +329,10 @@ public class MainVerticle extends AbstractVerticle {
      * @param responseStatus http response status to be given
      */
     private void endWithError(RoutingContext routingContext, HttpResponseStatus responseStatus) {
-        routingContext
-                .response()
-                .setStatusCode(responseStatus.code())
-                .end(Json.encodePrettily(
-                        new com.digisoft.mss.model.Error(
-                                responseStatus.code(),
-                                responseStatus.reasonPhrase())));
+        endWithStatus(routingContext,
+                responseStatus,
+                Json.encodePrettily(new com.digisoft.mss.model.Error(responseStatus.code(),
+                        responseStatus.reasonPhrase())));
     }
+
 }
