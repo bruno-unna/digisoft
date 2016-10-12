@@ -31,9 +31,13 @@ paths:
         - Subscriptions
       responses:
         200:
-          description: An object containing an array of message_type/count pairs
-          schema:
-            $ref: '#/definitions/SubscriptionCounters'
+          description: An object containing a message_type/count property for each message type.
+          examples:
+            application/json:
+              {
+                "type_0": 37,
+                "type_1": 45
+              }
     put:
       summary: Create/update subscriptions
       description: |
@@ -103,25 +107,6 @@ definitions:
         items:
           description: Message type, as a string.
           type: string
-  SubscriptionCounters:
-    type: object
-    properties:
-      subscriptionId:
-        description: Subscription identifier being described.
-        type: string
-      counters:
-        type: array
-        items:
-          description: Counter for a given subscription/message type.
-          type: object
-          properties:
-            messageType:
-              description: Type of the message.
-              type: string
-            count:
-              description: Number of times a message type has been used for the subscription.
-              type: integer
-              format: int64
   Error:
     type: object
     properties:
